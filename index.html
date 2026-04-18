@@ -396,12 +396,21 @@ function computeAutoHeights() {
 
   /* estimate how many rows the flex‑wrap will produce */
   let rowWidth = 0;
-  let rows = 1;
+  let rows = 0;
   cells.forEach(c => {
-    const basis = (FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard).basis;
+    /* fullRow or explicit‑width cells wider than 90% of the container
+       can't share a row, so count them as occupying their own row */
+    if (c.fullRow || (c.w && c.w > cw * 0.9)) {
+      if (rowWidth > 0) { rows++; rowWidth = 0; }
+      rows++;
+      return;
+    }
+    const basis = c.w || (FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard).basis;
     if (rowWidth + basis + gap > cw && rowWidth > 0) { rows++; rowWidth = 0; }
     rowWidth += basis + gap;
   });
+  if (rowWidth > 0) rows++;
+  rows = Math.max(1, rows);
   return Math.max(180, Math.floor((ch - (rows - 1) * gap) / rows));
 }
 
@@ -433,7 +442,8 @@ function render() {
       el.style.flex   = 'none';
     } else {
       const def = FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard;
-      el.style.flex   = `${def.grow} 1 ${def.basis}px`;
+      const basis = c.fullRow ? '100%' : def.basis + 'px';
+      el.style.flex   = `${def.grow} 1 ${basis}`;
       el.style.height = autoH + 'px';
     }
 
@@ -501,7 +511,7 @@ function removeAll() {
 
 /* ── Auto‑size all cells ──────────────────────────── */
 function autoSizeAll() {
-  cells.forEach(c => { delete c.w; delete c.h; });
+  cells.forEach(c => { delete c.w; delete c.h; delete c.fullRow; });
   render();
   saveState();
 }
@@ -720,17 +730,18 @@ function stopDrag() {
       }
       cells.splice(insertIdx, 0, moved);
 
-      /* vertical stack: set both cells to full width and 50/50 height */
-      if (info.mode === 'h') {
-        const target = cells.find(c => c.id === targetId);
-        const availH = grid.clientHeight - 6;          /* minus padding */
-        const halfH  = Math.max(120, Math.floor((availH - 3) / 2)); /* minus gap */
-        const fullW  = grid.clientWidth - 6;
+      const target = cells.find(c => c.id === targetId);
 
-        moved.w  = fullW;
-        moved.h  = halfH;
-        target.w = fullW;
-        target.h = halfH;
+      if (info.mode === 'h') {
+        /* vertical stack: both cells go full‑row, auto‑height */
+        delete moved.w;  delete moved.h;
+        delete target.w; delete target.h;
+        moved.fullRow  = true;
+        target.fullRow = true;
+      } else {
+        /* horizontal: cells share a row, revert to flex auto‑sizing */
+        delete moved.w;  delete moved.h;  delete moved.fullRow;
+        delete target.w; delete target.h; delete target.fullRow;
       }
 
       saveState();
