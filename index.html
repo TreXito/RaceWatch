@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RaceWatch Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #111;
+      --panel: #1a1a1a;
+      --border: #333;
+      --accent: #e10600;
+      --accent-hover: #ff1a1a;
+      --text: #eee;
+      --text-muted: #999;
+      --radius: 6px;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* ── Toolbar ───────────────────────────────────────── */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--panel);
+      border-bottom: 2px solid var(--accent);
+      flex-wrap: wrap;
+      z-index: 100;
+    }
+
+    #toolbar h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: var(--accent);
+      margin-right: 12px;
+      white-space: nowrap;
+    }
+
+    #toolbar h1 span { color: var(--text); }
+
+    .toolbar-btn {
+      padding: 5px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+      font-size: .82rem;
+      transition: background .15s, border-color .15s;
+      white-space: nowrap;
+    }
+
+    .toolbar-btn:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .toolbar-sep {
+      width: 1px;
+      height: 22px;
+      background: var(--border);
+      margin: 0 4px;
+    }
+
+    /* ── Layout selector ──────────────────────────────── */
+    #layout-select {
+      padding: 4px 8px;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: .82rem;
+      cursor: pointer;
+    }
+
+    /* ── Grid container ───────────────────────────────── */
+    #grid {
+      display: grid;
+      gap: 3px;
+      padding: 3px;
+      height: calc(100vh - 46px);
+      overflow: auto;
+      background: var(--bg);
+    }
+
+    /* Auto‑layout: fill equal cells */
+    #grid.auto-layout {
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      grid-auto-rows: 1fr;
+    }
+
+    /* Main + side layout */
+    #grid.main-side {
+      grid-template-columns: 2fr 1fr;
+      grid-template-rows: repeat(auto-fill, minmax(200px, 1fr));
+    }
+
+    #grid.main-side .cell:first-child {
+      grid-row: 1 / -1;
+    }
+
+    /* ── Cell (each panel) ────────────────────────────── */
+    .cell {
+      position: relative;
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 180px;
+    }
+
+    .cell-header {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 6px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      font-size: .75rem;
+    }
+
+    .cell-header .label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+    }
+
+    .cell-header .cell-type-badge {
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: .65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .cell-type-badge.stream { background: var(--accent); color: #fff; }
+    .cell-type-badge.onboard { background: #1565c0; color: #fff; }
+    .cell-type-badge.timing { background: #2e7d32; color: #fff; }
+
+    .cell-header button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: .85rem;
+      padding: 0 3px;
+      line-height: 1;
+    }
+
+    .cell-header button:hover { color: var(--accent); }
+
+    .cell-body {
+      flex: 1;
+      position: relative;
+    }
+
+    .cell-body iframe {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Empty‑state placeholder */
+    .cell-body .empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      font-size: .85rem;
+      text-align: center;
+      padding: 12px;
+    }
+
+    /* ── Modal ─────────────────────────────────────────── */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      min-width: 380px;
+      max-width: 90vw;
+    }
+
+    .modal h2 {
+      font-size: 1rem;
+      margin-bottom: 12px;
+      color: var(--accent);
+    }
+
+    .modal label {
+      display: block;
+      font-size: .8rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      margin-top: 10px;
+    }
+
+    .modal input, .modal select {
+      width: 100%;
+      padding: 7px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: .85rem;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      justify-content: flex-end;
+    }
+
+    .modal-actions button {
+      padding: 6px 18px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: .82rem;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent) !important;
+    }
+
+    .btn-primary:hover { background: var(--accent-hover); }
+
+    .btn-secondary {
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover { background: var(--border); }
+
+    /* ── Fullscreen on a cell ──────────────────────────── */
+    .cell.fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 150;
+      border-radius: 0;
+      border: none;
+      min-height: unset;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Toolbar ──────────────────────────────────────── -->
+<div id="toolbar">
+  <h1>🏁 RACE<span>WATCH</span></h1>
+
+  <button class="toolbar-btn" onclick="openAddModal('stream')" title="Add main stream">+ Stream</button>
+  <button class="toolbar-btn" onclick="openAddModal('onboard')" title="Add onboard camera">+ Onboard</button>
+  <button class="toolbar-btn" onclick="openAddModal('timing')" title="Add live timing">+ Timing</button>
+
+  <div class="toolbar-sep"></div>
+
+  <label for="layout-select" style="font-size:.78rem;color:var(--text-muted);white-space:nowrap;">Layout:</label>
+  <select id="layout-select" onchange="setLayout(this.value)">
+    <option value="auto">Auto Grid</option>
+    <option value="main-side">Main + Side</option>
+  </select>
+
+  <div class="toolbar-sep"></div>
+
+  <button class="toolbar-btn" onclick="removeAll()" title="Remove all panels">Clear All</button>
+</div>
+
+<!-- ── Grid ─────────────────────────────────────────── -->
+<div id="grid" class="auto-layout"></div>
+
+<!-- ── Modal placeholder ───────────────────────────── -->
+<div id="modal-root"></div>
+
+<script>
+/* ============================================================
+   RaceWatch Dashboard – single‑file logic
+   ============================================================ */
+
+const grid = document.getElementById('grid');
+const modalRoot = document.getElementById('modal-root');
+
+let cells = [];  // { id, type, url, label }
+let nextId = 1;
+
+/* ── YouTube URL → embed URL ──────────────────────── */
+function toEmbedUrl(raw) {
+  if (!raw) return '';
+  let url = raw.trim();
+
+  // Already an embed URL
+  if (url.includes('youtube.com/embed/')) return url;
+
+  let videoId = null;
+
+  // https://youtu.be/VIDEO_ID
+  const shortMatch = url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  if (shortMatch) videoId = shortMatch[1];
+
+  // https://www.youtube.com/watch?v=VIDEO_ID
+  if (!videoId) {
+    const longMatch = url.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+    if (longMatch) videoId = longMatch[1];
+  }
+
+  // https://www.youtube.com/live/VIDEO_ID
+  if (!videoId) {
+    const liveMatch = url.match(/youtube\.com\/live\/([A-Za-z0-9_-]{11})/);
+    if (liveMatch) videoId = liveMatch[1];
+  }
+
+  if (videoId) {
+    return 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&mute=1';
+  }
+
+  // Not a recognized YouTube URL → return as-is (could be another embed)
+  return url;
+}
+
+/* ── Render grid ──────────────────────────────────── */
+function render() {
+  grid.innerHTML = '';
+
+  if (cells.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:1.1rem;height:100%;">
+        Click <b style="color:var(--accent);margin:0 6px;">+ Stream</b>,
+        <b style="color:#1565c0;margin:0 6px;">+ Onboard</b> or
+        <b style="color:#2e7d32;margin:0 6px;">+ Timing</b> to get started.
+      </div>`;
+    return;
+  }
+
+  cells.forEach(c => {
+    const el = document.createElement('div');
+    el.className = 'cell';
+    el.dataset.id = c.id;
+
+    const badgeClass = c.type === 'stream' ? 'stream' : c.type === 'onboard' ? 'onboard' : 'timing';
+    const typeLabel = c.type === 'stream' ? 'Stream' : c.type === 'onboard' ? 'Onboard' : 'Timing';
+
+    el.innerHTML = `
+      <div class="cell-header">
+        <span class="cell-type-badge ${badgeClass}">${typeLabel}</span>
+        <span class="label" title="${escapeHtml(c.label || c.url)}">${escapeHtml(c.label || c.url)}</span>
+        <button title="Edit" onclick="openEditModal(${c.id})">&#9998;</button>
+        <button title="Fullscreen" onclick="toggleFullscreen(${c.id})">&#x26F6;</button>
+        <button title="Remove" onclick="removeCell(${c.id})">&times;</button>
+      </div>
+      <div class="cell-body">
+        ${c.url
+          ? `<iframe src="${escapeHtml(c.type === 'timing' ? c.url : toEmbedUrl(c.url))}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`
+          : `<div class="empty">No URL set – click ✎ to edit</div>`}
+      </div>`;
+
+    grid.appendChild(el);
+  });
+}
+
+/* ── Cell management ──────────────────────────────── */
+function addCell(type, url, label) {
+  cells.push({ id: nextId++, type, url: url || '', label: label || '' });
+  render();
+  saveState();
+}
+
+function updateCell(id, url, label) {
+  const c = cells.find(c => c.id === id);
+  if (!c) return;
+  c.url = url;
+  c.label = label;
+  render();
+  saveState();
+}
+
+function removeCell(id) {
+  cells = cells.filter(c => c.id !== id);
+  render();
+  saveState();
+}
+
+function removeAll() {
+  if (cells.length && !confirm('Remove all panels?')) return;
+  cells = [];
+  render();
+  saveState();
+}
+
+/* ── Layout ───────────────────────────────────────── */
+function setLayout(value) {
+  grid.className = value === 'main-side' ? 'main-side' : 'auto-layout';
+  localStorage.setItem('rw-layout', value);
+}
+
+(function restoreLayout() {
+  const saved = localStorage.getItem('rw-layout');
+  if (saved) {
+    document.getElementById('layout-select').value = saved;
+    setLayout(saved);
+  }
+})();
+
+/* ── Fullscreen toggle ────────────────────────────── */
+function toggleFullscreen(id) {
+  const el = grid.querySelector(`.cell[data-id="${id}"]`);
+  if (!el) return;
+  el.classList.toggle('fullscreen');
+}
+
+/* Close fullscreen on Escape */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.cell.fullscreen').forEach(el => el.classList.remove('fullscreen'));
+    closeModal();
+  }
+});
+
+/* ── Modals ────────────────────────────────────────── */
+function openAddModal(type) {
+  const typeLabel = type === 'stream' ? 'Stream' : type === 'onboard' ? 'Onboard' : 'Live Timing';
+  const placeholder = type === 'timing'
+    ? 'https://livetiming.azurewebsites.net/event=50'
+    : 'https://youtu.be/9FJKUkAVz1U';
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h2>Add ${typeLabel}</h2>
+        <label for="m-url">URL</label>
+        <input id="m-url" type="text" placeholder="${placeholder}" autofocus />
+        <label for="m-label">Label (optional)</label>
+        <input id="m-label" type="text" placeholder="e.g. VER onboard" />
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="submitAdd('${type}')">Add</button>
+        </div>
+      </div>
+    </div>`;
+
+  modalRoot.querySelector('#m-url').focus();
+  modalRoot.querySelector('#m-url').addEventListener('keydown', e => { if (e.key === 'Enter') submitAdd(type); });
+  modalRoot.querySelector('#m-label').addEventListener('keydown', e => { if (e.key === 'Enter') submitAdd(type); });
+}
+
+function submitAdd(type) {
+  const url = document.getElementById('m-url').value.trim();
+  const label = document.getElementById('m-label').value.trim();
+  addCell(type, url, label);
+  closeModal();
+}
+
+function openEditModal(id) {
+  const c = cells.find(c => c.id === id);
+  if (!c) return;
+
+  const typeLabel = c.type === 'stream' ? 'Stream' : c.type === 'onboard' ? 'Onboard' : 'Live Timing';
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h2>Edit ${typeLabel}</h2>
+        <label for="m-url">URL</label>
+        <input id="m-url" type="text" value="${escapeAttr(c.url)}" />
+        <label for="m-label">Label</label>
+        <input id="m-label" type="text" value="${escapeAttr(c.label)}" />
+        <label for="m-type">Type</label>
+        <select id="m-type">
+          <option value="stream" ${c.type === 'stream' ? 'selected' : ''}>Stream</option>
+          <option value="onboard" ${c.type === 'onboard' ? 'selected' : ''}>Onboard</option>
+          <option value="timing" ${c.type === 'timing' ? 'selected' : ''}>Timing</option>
+        </select>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="submitEdit(${id})">Save</button>
+        </div>
+      </div>
+    </div>`;
+
+  modalRoot.querySelector('#m-url').focus();
+  modalRoot.querySelector('#m-url').addEventListener('keydown', e => { if (e.key === 'Enter') submitEdit(id); });
+  modalRoot.querySelector('#m-label').addEventListener('keydown', e => { if (e.key === 'Enter') submitEdit(id); });
+}
+
+function submitEdit(id) {
+  const url = document.getElementById('m-url').value.trim();
+  const label = document.getElementById('m-label').value.trim();
+  const type = document.getElementById('m-type').value;
+  const c = cells.find(c => c.id === id);
+  if (c) { c.type = type; }
+  updateCell(id, url, label);
+  closeModal();
+}
+
+function closeModal() {
+  modalRoot.innerHTML = '';
+}
+
+/* ── Persistence (localStorage) ───────────────────── */
+function saveState() {
+  localStorage.setItem('rw-cells', JSON.stringify(cells));
+  localStorage.setItem('rw-nextId', nextId);
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem('rw-cells');
+    if (raw) {
+      cells = JSON.parse(raw);
+      nextId = parseInt(localStorage.getItem('rw-nextId') || '1', 10);
+    }
+  } catch { /* ignore corrupt state */ }
+  render();
+}
+
+/* ── Helpers ──────────────────────────────────────── */
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function escapeAttr(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ── Boot ─────────────────────────────────────────── */
+loadState();
+</script>
+</body>
+</html>
