@@ -303,13 +303,12 @@
     }
 
     .drop-indicator {
-      width: 4px;
-      align-self: stretch;
+      position: fixed;
       background: var(--accent);
       border-radius: 2px;
-      flex-shrink: 0;
       pointer-events: none;
       box-shadow: 0 0 8px var(--accent);
+      z-index: 50;
     }
   </style>
 </head>
@@ -638,46 +637,60 @@ function doDrag(e) {
   updateDropIndicator(e.clientX, e.clientY);
 }
 
+/* helpers for clamped axis distance */
+function _clampV(y, top, bot) { return y < top ? top - y : y > bot ? y - bot : 0; }
+function _clampH(x, left, right) { return x < left ? left - x : x > right ? x - right : 0; }
+
 function updateDropIndicator(mx, my) {
   /* remove old indicator */
-  const old = grid.querySelector('.drop-indicator');
+  const old = document.querySelector('.drop-indicator');
   if (old) old.remove();
 
   const cellEls = Array.from(grid.querySelectorAll('.cell'));
   if (cellEls.length < 2) return;
 
-  let bestIdx = cellEls.length;   /* default: append at end */
+  let best = null;
   let bestDist = Infinity;
 
   cellEls.forEach((el, i) => {
     if (el === _drag.el) return;
     const r = el.getBoundingClientRect();
-    /* left edge of each cell is a candidate drop position */
-    const dist = Math.abs(mx - r.left) + Math.abs(my - (r.top + r.height / 2));
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    }
+
+    /* Left edge – reorder before (horizontal) */
+    const dL = Math.abs(mx - r.left) + _clampV(my, r.top, r.bottom);
+    if (dL < bestDist) { bestDist = dL; best = { mode: 'v', pos: 'before', el, i, x: r.left, y1: r.top, y2: r.bottom }; }
+
+    /* Right edge – reorder after (horizontal) */
+    const dR = Math.abs(mx - r.right) + _clampV(my, r.top, r.bottom);
+    if (dR < bestDist) { bestDist = dR; best = { mode: 'v', pos: 'after', el, i, x: r.right, y1: r.top, y2: r.bottom }; }
+
+    /* Top edge – drop above (vertical stack) */
+    const dT = Math.abs(my - r.top) + _clampH(mx, r.left, r.right);
+    if (dT < bestDist) { bestDist = dT; best = { mode: 'h', pos: 'above', el, i, y: r.top, x1: r.left, x2: r.right }; }
+
+    /* Bottom edge – drop below (vertical stack) */
+    const dB = Math.abs(my - r.bottom) + _clampH(mx, r.left, r.right);
+    if (dB < bestDist) { bestDist = dB; best = { mode: 'h', pos: 'below', el, i, y: r.bottom, x1: r.left, x2: r.right }; }
   });
 
-  /* also consider right edge of the last cell */
-  const lastR = cellEls[cellEls.length - 1].getBoundingClientRect();
-  const endDist = Math.abs(mx - lastR.right) + Math.abs(my - (lastR.top + lastR.height / 2));
-  if (endDist < bestDist) {
-    bestIdx = cellEls.length;
-    bestDist = endDist;
-  }
+  if (!best) return;
+  _drag.dropInfo = best;
 
-  _drag.dropIdx = bestIdx;
-
-  /* insert visual indicator */
+  /* draw fixed‑position indicator */
   const ind = document.createElement('div');
   ind.className = 'drop-indicator';
-  if (bestIdx < cellEls.length) {
-    grid.insertBefore(ind, cellEls[bestIdx]);
+  if (best.mode === 'v') {
+    ind.style.left   = (best.x - 2) + 'px';
+    ind.style.top    = best.y1 + 'px';
+    ind.style.width  = '4px';
+    ind.style.height = (best.y2 - best.y1) + 'px';
   } else {
-    grid.appendChild(ind);
+    ind.style.left   = best.x1 + 'px';
+    ind.style.top    = (best.y - 2) + 'px';
+    ind.style.width  = (best.x2 - best.x1) + 'px';
+    ind.style.height = '4px';
   }
+  document.body.appendChild(ind);
 }
 
 function stopDrag() {
@@ -688,27 +701,38 @@ function stopDrag() {
 
   /* remove ghost & indicator */
   _drag.ghost.remove();
-  const ind = grid.querySelector('.drop-indicator');
+  const ind = document.querySelector('.drop-indicator');
   if (ind) ind.remove();
 
-  if (_drag.started && _drag.dropIdx != null) {
-    /* compute the actual indices in the cells array */
+  if (_drag.started && _drag.dropInfo) {
+    const info = _drag.dropInfo;
     const fromIdx = cells.findIndex(c => c.id === _drag.id);
-    /* dropIdx is the visual index among .cell elements; translate to cells‑array index */
-    const cellEls = Array.from(grid.querySelectorAll('.cell'));
-    let toIdx;
-    if (_drag.dropIdx >= cellEls.length) {
-      toIdx = cells.length;
-    } else {
-      const targetId = parseInt(cellEls[_drag.dropIdx].dataset.id, 10);
-      toIdx = cells.findIndex(c => c.id === targetId);
-    }
+    const targetId = parseInt(info.el.dataset.id, 10);
+    const toBaseIdx = cells.findIndex(c => c.id === targetId);
 
-    if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+    if (fromIdx !== -1 && toBaseIdx !== -1 && fromIdx !== toBaseIdx) {
       const [moved] = cells.splice(fromIdx, 1);
-      /* adjust target if it shifted after removal */
-      const adjustedTo = toIdx > fromIdx ? toIdx - 1 : toIdx;
-      cells.splice(adjustedTo, 0, moved);
+
+      /* recalculate target index after removal */
+      let insertIdx = cells.findIndex(c => c.id === targetId);
+      if (info.pos === 'after' || info.pos === 'below') {
+        insertIdx += 1;
+      }
+      cells.splice(insertIdx, 0, moved);
+
+      /* vertical stack: set both cells to full width and 50/50 height */
+      if (info.mode === 'h') {
+        const target = cells.find(c => c.id === targetId);
+        const availH = grid.clientHeight - 6;          /* minus padding */
+        const halfH  = Math.max(120, Math.floor((availH - 3) / 2)); /* minus gap */
+        const fullW  = grid.clientWidth - 6;
+
+        moved.w  = fullW;
+        moved.h  = halfH;
+        target.w = fullW;
+        target.h = halfH;
+      }
+
       saveState();
     }
   }
