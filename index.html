@@ -73,41 +73,18 @@
       margin: 0 4px;
     }
 
-    /* ── Layout selector ──────────────────────────────── */
-    #layout-select {
-      padding: 4px 8px;
-      background: var(--panel);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: .82rem;
-      cursor: pointer;
-    }
+    /* ── (layout selector removed – using auto‑size) ── */
 
-    /* ── Grid container ───────────────────────────────── */
+    /* ── Grid container (flex‑wrap for free‑form sizing) ─ */
     #grid {
-      display: grid;
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
       gap: 3px;
       padding: 3px;
       height: calc(100vh - 46px);
       overflow: auto;
       background: var(--bg);
-    }
-
-    /* Auto‑layout: fill equal cells */
-    #grid.auto-layout {
-      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-      grid-auto-rows: 1fr;
-    }
-
-    /* Main + side layout */
-    #grid.main-side {
-      grid-template-columns: 2fr 1fr;
-      grid-template-rows: repeat(auto-fill, minmax(200px, 1fr));
-    }
-
-    #grid.main-side .cell:first-child {
-      grid-row: 1 / -1;
     }
 
     /* ── Cell (each panel) ────────────────────────────── */
@@ -119,7 +96,8 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      min-height: 180px;
+      min-width: 200px;
+      min-height: 120px;
     }
 
     .cell-header {
@@ -272,7 +250,28 @@
       border-radius: 0;
       border: none;
       min-height: unset;
+      min-width: unset;
     }
+
+    /* ── Resize handles ──────────────────────────────── */
+    .resize-handle {
+      position: absolute;
+      z-index: 10;
+    }
+    .resize-handle:hover {
+      background: rgba(225, 6, 0, 0.25);
+    }
+    .resize-n  { top: 0; left: 8px; right: 8px; height: 4px; cursor: n-resize; }
+    .resize-s  { bottom: 0; left: 8px; right: 8px; height: 4px; cursor: s-resize; }
+    .resize-e  { right: 0; top: 8px; bottom: 8px; width: 4px; cursor: e-resize; }
+    .resize-w  { left: 0; top: 8px; bottom: 8px; width: 4px; cursor: w-resize; }
+    .resize-ne { top: 0; right: 0; width: 10px; height: 10px; cursor: ne-resize; }
+    .resize-nw { top: 0; left: 0; width: 10px; height: 10px; cursor: nw-resize; }
+    .resize-se { bottom: 0; right: 0; width: 10px; height: 10px; cursor: se-resize; }
+    .resize-sw { bottom: 0; left: 0; width: 10px; height: 10px; cursor: sw-resize; }
+
+    body.resizing iframe { pointer-events: none; }
+    body.resizing { user-select: none; }
   </style>
 </head>
 <body>
@@ -287,11 +286,7 @@
 
   <div class="toolbar-sep"></div>
 
-  <label for="layout-select" style="font-size:.78rem;color:var(--text-muted);white-space:nowrap;">Layout:</label>
-  <select id="layout-select" onchange="setLayout(this.value)">
-    <option value="auto">Auto Grid</option>
-    <option value="main-side">Main + Side</option>
-  </select>
+  <button class="toolbar-btn" onclick="autoSizeAll()" title="Auto‑size all panels to fill viewport">Auto Size</button>
 
   <div class="toolbar-sep"></div>
 
@@ -299,7 +294,7 @@
 </div>
 
 <!-- ── Grid ─────────────────────────────────────────── -->
-<div id="grid" class="auto-layout"></div>
+<div id="grid"></div>
 
 <!-- ── Modal placeholder ───────────────────────────── -->
 <div id="modal-root"></div>
@@ -349,13 +344,36 @@ function toEmbedUrl(raw) {
   return url;
 }
 
+/* ── Auto‑size helpers ─────────────────────────────── */
+const FLEX_DEFAULTS = {
+  stream:  { grow: 2, basis: 500 },
+  timing:  { grow: 1, basis: 300 },
+  onboard: { grow: 1, basis: 280 }
+};
+
+function computeAutoHeights() {
+  const cw  = grid.clientWidth  - 6;
+  const ch  = grid.clientHeight - 6;
+  const gap = 3;
+
+  /* estimate how many rows the flex‑wrap will produce */
+  let rowWidth = 0;
+  let rows = 1;
+  cells.forEach(c => {
+    const basis = (FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard).basis;
+    if (rowWidth + basis + gap > cw && rowWidth > 0) { rows++; rowWidth = 0; }
+    rowWidth += basis + gap;
+  });
+  return Math.max(180, Math.floor((ch - (rows - 1) * gap) / rows));
+}
+
 /* ── Render grid ──────────────────────────────────── */
 function render() {
   grid.innerHTML = '';
 
   if (cells.length === 0) {
     grid.innerHTML = `
-      <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:1.1rem;height:100%;">
+      <div style="width:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:1.1rem;height:100%;">
         Click <b style="color:var(--accent);margin:0 6px;">+ Stream</b>,
         <b style="color:#1565c0;margin:0 6px;">+ Onboard</b> or
         <b style="color:#2e7d32;margin:0 6px;">+ Timing</b> to get started.
@@ -363,13 +381,26 @@ function render() {
     return;
   }
 
+  const autoH = computeAutoHeights();
+
   cells.forEach(c => {
     const el = document.createElement('div');
     el.className = 'cell';
     el.dataset.id = c.id;
 
+    /* sizing: explicit (manual) or flex (auto) */
+    if (c.w && c.h) {
+      el.style.width  = c.w + 'px';
+      el.style.height = c.h + 'px';
+      el.style.flex   = 'none';
+    } else {
+      const def = FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard;
+      el.style.flex   = `${def.grow} 1 ${def.basis}px`;
+      el.style.height = autoH + 'px';
+    }
+
     const badgeClass = c.type === 'stream' ? 'stream' : c.type === 'onboard' ? 'onboard' : 'timing';
-    const typeLabel = c.type === 'stream' ? 'Stream' : c.type === 'onboard' ? 'Onboard' : 'Timing';
+    const typeLabel  = badgeClass === 'stream' ? 'Stream' : badgeClass === 'onboard' ? 'Onboard' : 'Timing';
 
     el.innerHTML = `
       <div class="cell-header">
@@ -384,6 +415,14 @@ function render() {
           ? `<iframe src="${escapeHtml(c.type === 'timing' ? c.url : toEmbedUrl(c.url))}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`
           : `<div class="empty">No URL set – click ✎ to edit</div>`}
       </div>`;
+
+    /* ── resize handles (all 8 directions) ─── */
+    ['n','s','e','w','ne','nw','se','sw'].forEach(dir => {
+      const h = document.createElement('div');
+      h.className = `resize-handle resize-${dir}`;
+      h.addEventListener('mousedown', e => initResize(e, c.id, dir));
+      el.appendChild(h);
+    });
 
     grid.appendChild(el);
   });
@@ -418,19 +457,77 @@ function removeAll() {
   saveState();
 }
 
-/* ── Layout ───────────────────────────────────────── */
-function setLayout(value) {
-  grid.className = value === 'main-side' ? 'main-side' : 'auto-layout';
-  localStorage.setItem('rw-layout', value);
+/* ── Auto‑size all cells ──────────────────────────── */
+function autoSizeAll() {
+  cells.forEach(c => { delete c.w; delete c.h; });
+  render();
+  saveState();
 }
 
-(function restoreLayout() {
-  const saved = localStorage.getItem('rw-layout');
-  if (saved) {
-    document.getElementById('layout-select').value = saved;
-    setLayout(saved);
+/* Re‑auto‑size when the window is resized (only for auto‑sized cells) */
+window.addEventListener('resize', () => {
+  if (cells.some(c => !c.w || !c.h)) render();
+});
+
+/* ── Resize logic ────────────────────────────────── */
+let _resize = null;
+
+function initResize(e, cellId, dir) {
+  e.preventDefault();
+  e.stopPropagation();
+  const cellEl = grid.querySelector(`.cell[data-id="${cellId}"]`);
+  if (!cellEl) return;
+
+  _resize = {
+    id:   cellId,
+    dir:  dir,
+    sx:   e.clientX,
+    sy:   e.clientY,
+    sw:   cellEl.offsetWidth,
+    sh:   cellEl.offsetHeight,
+    el:   cellEl
+  };
+
+  document.body.classList.add('resizing');
+  document.addEventListener('mousemove', doResize);
+  document.addEventListener('mouseup',   stopResize);
+}
+
+function doResize(e) {
+  if (!_resize) return;
+  const dx = e.clientX - _resize.sx;
+  const dy = e.clientY - _resize.sy;
+  const d  = _resize.dir;
+
+  let nw = _resize.sw;
+  let nh = _resize.sh;
+
+  if (d.includes('e')) nw = _resize.sw + dx;
+  if (d.includes('w')) nw = _resize.sw - dx;
+  if (d.includes('s')) nh = _resize.sh + dy;
+  if (d.includes('n')) nh = _resize.sh - dy;
+
+  nw = Math.max(200, nw);
+  nh = Math.max(120, nh);
+
+  _resize.el.style.width  = nw + 'px';
+  _resize.el.style.height = nh + 'px';
+  _resize.el.style.flex   = 'none';
+}
+
+function stopResize() {
+  if (!_resize) return;
+  const cell = cells.find(x => x.id === _resize.id);
+  if (cell) {
+    cell.w = _resize.el.offsetWidth;
+    cell.h = _resize.el.offsetHeight;
+    saveState();
   }
-})();
+  document.body.classList.remove('resizing');
+  document.removeEventListener('mousemove', doResize);
+  document.removeEventListener('mouseup',   stopResize);
+  _resize = null;
+}
 
 /* ── Fullscreen toggle ────────────────────────────── */
 function toggleFullscreen(id) {
