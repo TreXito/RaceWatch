@@ -272,6 +272,45 @@
 
     body.resizing iframe { pointer-events: none; }
     body.resizing { user-select: none; }
+
+    /* ── Drag‑and‑drop reordering ─────────────────── */
+    .cell-header {
+      cursor: grab;
+    }
+
+    .cell-header button {
+      cursor: pointer;   /* buttons keep pointer cursor */
+    }
+
+    body.dragging { user-select: none; cursor: grabbing !important; }
+    body.dragging iframe { pointer-events: none; }
+    body.dragging .cell-header { cursor: grabbing; }
+
+    .drag-ghost {
+      position: fixed;
+      pointer-events: none;
+      z-index: 300;
+      opacity: .65;
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 24px rgba(0,0,0,.5);
+      overflow: hidden;
+      transition: none;
+    }
+
+    .cell.drag-source {
+      opacity: .25;
+    }
+
+    .drop-indicator {
+      width: 4px;
+      align-self: stretch;
+      background: var(--accent);
+      border-radius: 2px;
+      flex-shrink: 0;
+      pointer-events: none;
+      box-shadow: 0 0 8px var(--accent);
+    }
   </style>
 </head>
 <body>
@@ -424,6 +463,10 @@ function render() {
       el.appendChild(h);
     });
 
+    /* ── drag handle (cell header) ─── */
+    const header = el.querySelector('.cell-header');
+    header.addEventListener('mousedown', e => initDrag(e, c.id));
+
     grid.appendChild(el);
   });
 }
@@ -527,6 +570,153 @@ function stopResize() {
   document.removeEventListener('mousemove', doResize);
   document.removeEventListener('mouseup',   stopResize);
   _resize = null;
+}
+
+/* ── Drag‑and‑drop reordering ────────────────────── */
+let _drag = null;
+
+function initDrag(e, cellId) {
+  /* ignore right‑click, buttons inside header, resize handles */
+  if (e.button !== 0) return;
+  if (e.target.closest('button')) return;
+
+  e.preventDefault();
+
+  const cellEl = grid.querySelector(`.cell[data-id="${cellId}"]`);
+  if (!cellEl) return;
+
+  const rect = cellEl.getBoundingClientRect();
+
+  /* create ghost (shallow clone – no iframes to avoid reloading) */
+  const ghost = cellEl.cloneNode(true);
+  ghost.className = 'drag-ghost';
+  ghost.style.width  = rect.width  + 'px';
+  ghost.style.height = rect.height + 'px';
+  ghost.style.left   = rect.left   + 'px';
+  ghost.style.top    = rect.top    + 'px';
+  /* strip iframes from ghost to keep it lightweight */
+  ghost.querySelectorAll('iframe').forEach(f => {
+    const ph = document.createElement('div');
+    ph.style.cssText = 'width:100%;height:100%;background:#222;';
+    f.replaceWith(ph);
+  });
+  document.body.appendChild(ghost);
+
+  _drag = {
+    id:     cellId,
+    el:     cellEl,
+    ghost:  ghost,
+    ox:     e.clientX - rect.left,
+    oy:     e.clientY - rect.top,
+    started: false,
+    sx:     e.clientX,
+    sy:     e.clientY
+  };
+
+  document.addEventListener('mousemove', doDrag);
+  document.addEventListener('mouseup',   stopDrag);
+}
+
+function doDrag(e) {
+  if (!_drag) return;
+
+  /* require minimum movement before starting visible drag */
+  if (!_drag.started) {
+    const dx = Math.abs(e.clientX - _drag.sx);
+    const dy = Math.abs(e.clientY - _drag.sy);
+    if (dx < 5 && dy < 5) return;
+    _drag.started = true;
+    _drag.el.classList.add('drag-source');
+    document.body.classList.add('dragging');
+  }
+
+  /* move ghost */
+  _drag.ghost.style.left = (e.clientX - _drag.ox) + 'px';
+  _drag.ghost.style.top  = (e.clientY - _drag.oy) + 'px';
+
+  /* show drop indicator */
+  updateDropIndicator(e.clientX, e.clientY);
+}
+
+function updateDropIndicator(mx, my) {
+  /* remove old indicator */
+  const old = grid.querySelector('.drop-indicator');
+  if (old) old.remove();
+
+  const cellEls = Array.from(grid.querySelectorAll('.cell'));
+  if (cellEls.length < 2) return;
+
+  let bestIdx = cellEls.length;   /* default: append at end */
+  let bestDist = Infinity;
+
+  cellEls.forEach((el, i) => {
+    if (el === _drag.el) return;
+    const r = el.getBoundingClientRect();
+    /* left edge of each cell is a candidate drop position */
+    const dist = Math.abs(mx - r.left) + Math.abs(my - (r.top + r.height / 2));
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  });
+
+  /* also consider right edge of the last cell */
+  const lastR = cellEls[cellEls.length - 1].getBoundingClientRect();
+  const endDist = Math.abs(mx - lastR.right) + Math.abs(my - (lastR.top + lastR.height / 2));
+  if (endDist < bestDist) {
+    bestIdx = cellEls.length;
+    bestDist = endDist;
+  }
+
+  _drag.dropIdx = bestIdx;
+
+  /* insert visual indicator */
+  const ind = document.createElement('div');
+  ind.className = 'drop-indicator';
+  if (bestIdx < cellEls.length) {
+    grid.insertBefore(ind, cellEls[bestIdx]);
+  } else {
+    grid.appendChild(ind);
+  }
+}
+
+function stopDrag() {
+  document.removeEventListener('mousemove', doDrag);
+  document.removeEventListener('mouseup',   stopDrag);
+
+  if (!_drag) return;
+
+  /* remove ghost & indicator */
+  _drag.ghost.remove();
+  const ind = grid.querySelector('.drop-indicator');
+  if (ind) ind.remove();
+
+  if (_drag.started && _drag.dropIdx != null) {
+    /* compute the actual indices in the cells array */
+    const fromIdx = cells.findIndex(c => c.id === _drag.id);
+    /* dropIdx is the visual index among .cell elements; translate to cells‑array index */
+    const cellEls = Array.from(grid.querySelectorAll('.cell'));
+    let toIdx;
+    if (_drag.dropIdx >= cellEls.length) {
+      toIdx = cells.length;
+    } else {
+      const targetId = parseInt(cellEls[_drag.dropIdx].dataset.id, 10);
+      toIdx = cells.findIndex(c => c.id === targetId);
+    }
+
+    if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+      const [moved] = cells.splice(fromIdx, 1);
+      /* adjust target if it shifted after removal */
+      const adjustedTo = toIdx > fromIdx ? toIdx - 1 : toIdx;
+      cells.splice(adjustedTo, 0, moved);
+      saveState();
+    }
+  }
+
+  _drag.el.classList.remove('drag-source');
+  document.body.classList.remove('dragging');
+  _drag = null;
+  render();
 }
 
 /* ── Fullscreen toggle ────────────────────────────── */
