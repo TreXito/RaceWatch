@@ -465,7 +465,7 @@ function render() {
 
     /* ── drag handle (cell header) ─── */
     const header = el.querySelector('.cell-header');
-    header.addEventListener('mousedown', e => initDrag(e, c.id));
+    if (header) header.addEventListener('mousedown', e => initDrag(e, c.id));
 
     grid.appendChild(el);
   });
@@ -713,8 +713,10 @@ function stopDrag() {
     }
   }
 
-  _drag.el.classList.remove('drag-source');
-  document.body.classList.remove('dragging');
+  if (_drag.started) {
+    _drag.el.classList.remove('drag-source');
+    document.body.classList.remove('dragging');
+  }
   _drag = null;
   render();
 }
