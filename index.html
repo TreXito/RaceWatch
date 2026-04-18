@@ -400,7 +400,7 @@ function render() {
     }
 
     const badgeClass = c.type === 'stream' ? 'stream' : c.type === 'onboard' ? 'onboard' : 'timing';
-    const typeLabel  = c.type === 'stream' ? 'Stream' : c.type === 'onboard' ? 'Onboard' : 'Timing';
+    const typeLabel  = badgeClass === 'stream' ? 'Stream' : badgeClass === 'onboard' ? 'Onboard' : 'Timing';
 
     el.innerHTML = `
       <div class="cell-header">
@@ -517,10 +517,10 @@ function doResize(e) {
 
 function stopResize() {
   if (!_resize) return;
-  const c = cells.find(c => c.id === _resize.id);
-  if (c) {
-    c.w = _resize.el.offsetWidth;
-    c.h = _resize.el.offsetHeight;
+  const cell = cells.find(x => x.id === _resize.id);
+  if (cell) {
+    cell.w = _resize.el.offsetWidth;
+    cell.h = _resize.el.offsetHeight;
     saveState();
   }
   document.body.classList.remove('resizing');
