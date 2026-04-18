@@ -302,6 +302,20 @@
       opacity: .25;
     }
 
+    /* ── Column groups (vertical stacking) ──────────── */
+    .cell-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 200px;
+      min-height: 120px;
+    }
+
+    .cell-group > .cell {
+      flex: 1 1 0;
+      min-height: 60px;
+    }
+
     .drop-indicator {
       position: fixed;
       background: var(--accent);
@@ -345,8 +359,9 @@
 const grid = document.getElementById('grid');
 const modalRoot = document.getElementById('modal-root');
 
-let cells = [];  // { id, type, url, label }
+let cells = [];  // { id, type, url, label, group? }
 let nextId = 1;
+let nextGroupId = 1;
 
 /* ── YouTube URL → embed URL ──────────────────────── */
 function toEmbedUrl(raw) {
@@ -397,6 +412,7 @@ function computeAutoHeights() {
   /* estimate how many rows the flex‑wrap will produce */
   let rowWidth = 0;
   let rows = 0;
+  const seenGroups = new Set();
   cells.forEach(c => {
     /* fullRow or explicit‑width cells wider than 90% of the container
        can't share a row, so count them as occupying their own row */
@@ -404,6 +420,11 @@ function computeAutoHeights() {
       if (rowWidth > 0) { rows++; rowWidth = 0; }
       rows++;
       return;
+    }
+    /* grouped cells count once for the whole group */
+    if (c.group != null) {
+      if (seenGroups.has(c.group)) return;
+      seenGroups.add(c.group);
     }
     const basis = c.w || (FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard).basis;
     if (rowWidth + basis + gap > cw && rowWidth > 0) { rows++; rowWidth = 0; }
@@ -415,6 +436,58 @@ function computeAutoHeights() {
 }
 
 /* ── Render grid ──────────────────────────────────── */
+function buildCellEl(c, autoH, inGroup) {
+  const el = document.createElement('div');
+  el.className = 'cell';
+  el.dataset.id = c.id;
+
+  /* sizing: explicit (manual) or flex (auto) */
+  if (!inGroup) {
+    if (c.w && c.h) {
+      el.style.width  = c.w + 'px';
+      el.style.height = c.h + 'px';
+      el.style.flex   = 'none';
+    } else {
+      const def = FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard;
+      const basis = c.fullRow ? '100%' : def.basis + 'px';
+      el.style.flex   = `${def.grow} 1 ${basis}`;
+      el.style.height = autoH + 'px';
+    }
+  }
+  /* cells inside a group get flex:1 from CSS (.cell-group > .cell) */
+
+  const badgeClass = c.type === 'stream' ? 'stream' : c.type === 'onboard' ? 'onboard' : 'timing';
+  const typeLabel  = badgeClass === 'stream' ? 'Stream' : badgeClass === 'onboard' ? 'Onboard' : 'Timing';
+
+  el.innerHTML = `
+    <div class="cell-header">
+      <span class="cell-type-badge ${badgeClass}">${typeLabel}</span>
+      <span class="label" title="${escapeHtml(c.label || c.url)}">${escapeHtml(c.label || c.url)}</span>
+      <button title="Edit" onclick="openEditModal(${c.id})">&#9998;</button>
+      <button title="Fullscreen" onclick="toggleFullscreen(${c.id})">&#x26F6;</button>
+      <button title="Remove" onclick="removeCell(${c.id})">&times;</button>
+    </div>
+    <div class="cell-body">
+      ${c.url
+        ? `<iframe src="${escapeHtml(c.type === 'timing' ? c.url : toEmbedUrl(c.url))}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`
+        : `<div class="empty">No URL set – click ✎ to edit</div>`}
+    </div>`;
+
+  /* ── resize handles (all 8 directions) ─── */
+  ['n','s','e','w','ne','nw','se','sw'].forEach(dir => {
+    const h = document.createElement('div');
+    h.className = `resize-handle resize-${dir}`;
+    h.addEventListener('mousedown', e => initResize(e, c.id, dir));
+    el.appendChild(h);
+  });
+
+  /* ── drag handle (cell header) ─── */
+  const header = el.querySelector('.cell-header');
+  if (header) header.addEventListener('mousedown', e => initDrag(e, c.id));
+
+  return el;
+}
+
 function render() {
   grid.innerHTML = '';
 
@@ -430,54 +503,32 @@ function render() {
 
   const autoH = computeAutoHeights();
 
-  cells.forEach(c => {
-    const el = document.createElement('div');
-    el.className = 'cell';
-    el.dataset.id = c.id;
+  let i = 0;
+  while (i < cells.length) {
+    const c = cells[i];
 
-    /* sizing: explicit (manual) or flex (auto) */
-    if (c.w && c.h) {
-      el.style.width  = c.w + 'px';
-      el.style.height = c.h + 'px';
-      el.style.flex   = 'none';
+    if (c.group != null) {
+      /* collect consecutive cells sharing this group */
+      const gid = c.group;
+      const start = i;
+      while (i < cells.length && cells[i].group === gid) i++;
+      const groupCells = cells.slice(start, i);
+
+      /* create column wrapper */
+      const wrapper = document.createElement('div');
+      wrapper.className = 'cell-group';
+      const maxGrow  = Math.max(...groupCells.map(gc => (FLEX_DEFAULTS[gc.type] || FLEX_DEFAULTS.onboard).grow));
+      const maxBasis = Math.max(...groupCells.map(gc => (FLEX_DEFAULTS[gc.type] || FLEX_DEFAULTS.onboard).basis));
+      wrapper.style.flex   = `${maxGrow} 1 ${maxBasis}px`;
+      wrapper.style.height = autoH + 'px';
+
+      groupCells.forEach(gc => wrapper.appendChild(buildCellEl(gc, autoH, true)));
+      grid.appendChild(wrapper);
     } else {
-      const def = FLEX_DEFAULTS[c.type] || FLEX_DEFAULTS.onboard;
-      const basis = c.fullRow ? '100%' : def.basis + 'px';
-      el.style.flex   = `${def.grow} 1 ${basis}`;
-      el.style.height = autoH + 'px';
+      grid.appendChild(buildCellEl(c, autoH, false));
+      i++;
     }
-
-    const badgeClass = c.type === 'stream' ? 'stream' : c.type === 'onboard' ? 'onboard' : 'timing';
-    const typeLabel  = badgeClass === 'stream' ? 'Stream' : badgeClass === 'onboard' ? 'Onboard' : 'Timing';
-
-    el.innerHTML = `
-      <div class="cell-header">
-        <span class="cell-type-badge ${badgeClass}">${typeLabel}</span>
-        <span class="label" title="${escapeHtml(c.label || c.url)}">${escapeHtml(c.label || c.url)}</span>
-        <button title="Edit" onclick="openEditModal(${c.id})">&#9998;</button>
-        <button title="Fullscreen" onclick="toggleFullscreen(${c.id})">&#x26F6;</button>
-        <button title="Remove" onclick="removeCell(${c.id})">&times;</button>
-      </div>
-      <div class="cell-body">
-        ${c.url
-          ? `<iframe src="${escapeHtml(c.type === 'timing' ? c.url : toEmbedUrl(c.url))}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`
-          : `<div class="empty">No URL set – click ✎ to edit</div>`}
-      </div>`;
-
-    /* ── resize handles (all 8 directions) ─── */
-    ['n','s','e','w','ne','nw','se','sw'].forEach(dir => {
-      const h = document.createElement('div');
-      h.className = `resize-handle resize-${dir}`;
-      h.addEventListener('mousedown', e => initResize(e, c.id, dir));
-      el.appendChild(h);
-    });
-
-    /* ── drag handle (cell header) ─── */
-    const header = el.querySelector('.cell-header');
-    if (header) header.addEventListener('mousedown', e => initDrag(e, c.id));
-
-    grid.appendChild(el);
-  });
+  }
 }
 
 /* ── Cell management ──────────────────────────────── */
@@ -498,6 +549,7 @@ function updateCell(id, url, label) {
 
 function removeCell(id) {
   cells = cells.filter(c => c.id !== id);
+  cleanupGroups();
   render();
   saveState();
 }
@@ -511,9 +563,33 @@ function removeAll() {
 
 /* ── Auto‑size all cells ──────────────────────────── */
 function autoSizeAll() {
-  cells.forEach(c => { delete c.w; delete c.h; delete c.fullRow; });
+  cells.forEach(c => { delete c.w; delete c.h; delete c.fullRow; delete c.group; });
   render();
   saveState();
+}
+
+/* ── Group helpers ────────────────────────────────── */
+function cleanupGroups() {
+  /* build map of group → indices */
+  const groupMap = {};
+  cells.forEach((c, idx) => {
+    if (c.group != null) {
+      if (!groupMap[c.group]) groupMap[c.group] = [];
+      groupMap[c.group].push(idx);
+    }
+  });
+  /* ungroup if fewer than 2 members or members aren't consecutive */
+  for (const indices of Object.values(groupMap)) {
+    let valid = indices.length >= 2;
+    if (valid) {
+      for (let k = 1; k < indices.length; k++) {
+        if (indices[k] !== indices[k - 1] + 1) { valid = false; break; }
+      }
+    }
+    if (!valid) {
+      indices.forEach(idx => delete cells[idx].group);
+    }
+  }
 }
 
 /* Re‑auto‑size when the window is resized (only for auto‑sized cells) */
@@ -570,15 +646,20 @@ function doResize(e) {
 function stopResize() {
   if (!_resize) return;
   const cell = cells.find(x => x.id === _resize.id);
+  const wasInGroup = cell && cell.group != null;
   if (cell) {
     cell.w = _resize.el.offsetWidth;
     cell.h = _resize.el.offsetHeight;
+    delete cell.group;
+    delete cell.fullRow;
+    cleanupGroups();
     saveState();
   }
   document.body.classList.remove('resizing');
   document.removeEventListener('mousemove', doResize);
   document.removeEventListener('mouseup',   stopResize);
   _resize = null;
+  if (wasInGroup) render();
 }
 
 /* ── Drag‑and‑drop reordering ────────────────────── */
@@ -723,6 +804,9 @@ function stopDrag() {
     if (fromIdx !== -1 && toBaseIdx !== -1 && fromIdx !== toBaseIdx) {
       const [moved] = cells.splice(fromIdx, 1);
 
+      /* remove from old group before reinserting */
+      delete moved.group;
+
       /* recalculate target index after removal */
       let insertIdx = cells.findIndex(c => c.id === targetId);
       if (info.pos === 'after' || info.pos === 'below') {
@@ -733,17 +817,19 @@ function stopDrag() {
       const target = cells.find(c => c.id === targetId);
 
       if (info.mode === 'h') {
-        /* vertical stack: both cells go full‑row, auto‑height */
-        delete moved.w;  delete moved.h;
-        delete target.w; delete target.h;
-        moved.fullRow  = true;
-        target.fullRow = true;
+        /* vertical stack: group cells into a column */
+        delete moved.w;  delete moved.h;  delete moved.fullRow;
+        delete target.w; delete target.h; delete target.fullRow;
+        const gid = target.group != null ? target.group : (nextGroupId++);
+        moved.group  = gid;
+        target.group = gid;
       } else {
         /* horizontal: cells share a row, revert to flex auto‑sizing */
-        delete moved.w;  delete moved.h;  delete moved.fullRow;
+        delete moved.w;  delete moved.h;  delete moved.fullRow;  delete moved.group;
         delete target.w; delete target.h; delete target.fullRow;
       }
 
+      cleanupGroups();
       saveState();
     }
   }
@@ -863,6 +949,9 @@ function loadState() {
     if (raw) {
       cells = JSON.parse(raw);
       nextId = parseInt(localStorage.getItem('rw-nextId') || '1', 10);
+      /* restore nextGroupId from existing cells */
+      const maxG = cells.reduce((m, c) => c.group != null && c.group >= m ? c.group + 1 : m, 1);
+      nextGroupId = maxG;
     }
   } catch { /* ignore corrupt state */ }
   render();
