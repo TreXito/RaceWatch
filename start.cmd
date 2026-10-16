@@ -19,9 +19,13 @@ echo   Press Ctrl+C to stop the server.
 echo   ────────────────────────────────────────
 echo.
 
-:: Try Python 3 first
+:: Prefer server.py: serves the dashboard for ANY path (no "404 - File not found")
 where python >nul 2>nul
 if %ERRORLEVEL% equ 0 (
+    if exist "%DIR%server.py" (
+        python "%DIR%server.py" %PORT% 127.0.0.1
+        goto :eof
+    )
     python -m http.server %PORT% --directory "%DIR%" --bind 127.0.0.1
     goto :eof
 )
@@ -29,6 +33,10 @@ if %ERRORLEVEL% equ 0 (
 :: Try Python via py launcher
 where py >nul 2>nul
 if %ERRORLEVEL% equ 0 (
+    if exist "%DIR%server.py" (
+        py -3 "%DIR%server.py" %PORT% 127.0.0.1
+        goto :eof
+    )
     py -3 -m http.server %PORT% --directory "%DIR%" --bind 127.0.0.1
     goto :eof
 )

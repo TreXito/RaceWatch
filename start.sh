@@ -20,8 +20,11 @@ echo "  Press Ctrl+C to stop the server."
 echo "  ────────────────────────────────────────"
 echo ""
 
-# Try Python 3 first, then Python 2, then php, then npx
-if command -v python3 &>/dev/null; then
+# Prefer server.py: it serves the dashboard for ANY path, so a typo or a
+# stale bookmark gets the app instead of a "404 - File not found" page.
+if command -v python3 &>/dev/null && [[ -f "$DIR/server.py" ]]; then
+    python3 "$DIR/server.py" "$PORT" "127.0.0.1"
+elif command -v python3 &>/dev/null; then
     python3 -m http.server "$PORT" --directory "$DIR" --bind 127.0.0.1
 elif command -v python &>/dev/null; then
     # Python 2 fallback (cd required, no --directory flag)

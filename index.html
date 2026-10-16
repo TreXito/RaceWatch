@@ -363,38 +363,70 @@ let cells = [];  // { id, type, url, label, group? }
 let nextId = 1;
 let nextGroupId = 1;
 
+/* ── URL normalization ───────────────────────────────
+   A pasted URL without a scheme ("youtu.be/x", "livetiming…/event=50")
+   would otherwise become a RELATIVE iframe src and the local server
+   answers it with its 404 "File not found." page inside the panel. */
+function normalizeUrl(raw) {
+  if (!raw) return '';
+  const s = raw.trim();
+  if (!s) return '';
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;      // already absolute
+  if (/^\/\//.test(s)) return 'https:' + s;              // protocol-relative
+  if (/^localhost(:\d+)?([/?#]|$)/i.test(s)) return 'http://' + s;
+  return 'https://' + s;
+}
+
 /* ── YouTube URL → embed URL ──────────────────────── */
 function toEmbedUrl(raw) {
-  if (!raw) return '';
-  let url = raw.trim();
+  const url = normalizeUrl(raw);
+  if (!url) return '';
 
-  // Already an embed URL
-  if (url.includes('youtube.com/embed/')) return url;
+  let u;
+  try { u = new URL(url); } catch { return url; }
 
+  const host = u.hostname.replace(/^www\./, '').toLowerCase();
+  const isYouTube = host === 'youtube.com' || host === 'm.youtube.com' ||
+                    host === 'music.youtube.com' || host === 'youtube-nocookie.com' ||
+                    host === 'youtu.be';
+  if (!isYouTube) return url;                            // other embeds pass through
+
+  const params = u.searchParams;
   let videoId = null;
 
-  // https://youtu.be/VIDEO_ID
-  const shortMatch = url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
-  if (shortMatch) videoId = shortMatch[1];
-
-  // https://www.youtube.com/watch?v=VIDEO_ID
-  if (!videoId) {
-    const longMatch = url.match(/[?&]v=([A-Za-z0-9_-]{11})/);
-    if (longMatch) videoId = longMatch[1];
+  if (host === 'youtu.be') {
+    videoId = u.pathname.split('/').filter(Boolean)[0] || null;
+  } else {
+    const seg = u.pathname.split('/').filter(Boolean);
+    if (u.pathname === '/watch')          videoId = params.get('v');
+    else if (seg[0] === 'embed')          videoId = seg[1] || null;   // already an embed
+    else if (seg[0] === 'v')              videoId = seg[1] || null;   // legacy /v/ID
+    else if (seg[0] === 'shorts')         videoId = seg[1] || null;   // /shorts/ID
+    else if (seg[0] === 'live')           videoId = seg[1] || null;   // /live/ID
+    else if (seg[0] === 'playlist')       return embedPlaylist(params.get('list'), url);
   }
 
-  // https://www.youtube.com/live/VIDEO_ID
-  if (!videoId) {
-    const liveMatch = url.match(/youtube\.com\/live\/([A-Za-z0-9_-]{11})/);
-    if (liveMatch) videoId = liveMatch[1];
+  if (videoId && /^[A-Za-z0-9_-]{6,}$/.test(videoId)) {
+    const q = new URLSearchParams();
+    const start = params.get('start') || (params.get('t') || '').replace(/^\D+/, '');
+    if (start) q.set('start', start);
+    q.set('autoplay', '1');
+    q.set('mute', '1');
+    return 'https://www.youtube.com/embed/' + videoId + '?' + q.toString();
   }
 
-  if (videoId) {
-    return 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&mute=1';
-  }
+  // pure playlist link without a video → embed the playlist itself
+  const list = params.get('list');
+  if (list) return embedPlaylist(list, url);
 
-  // Not a recognized YouTube URL → return as-is (could be another embed)
-  return url;
+  return url;                                            // give up, pass through
+}
+
+function embedPlaylist(list, fallback) {
+  if (list && /^[A-Za-z0-9_-]{6,}$/.test(list)) {
+    return 'https://www.youtube.com/embed/videoseries?list=' + encodeURIComponent(list);
+  }
+  return fallback;
 }
 
 /* ── Auto‑size helpers ─────────────────────────────── */
@@ -464,12 +496,13 @@ function buildCellEl(c, autoH, inGroup) {
       <span class="cell-type-badge ${badgeClass}">${typeLabel}</span>
       <span class="label" title="${escapeHtml(c.label || c.url)}">${escapeHtml(c.label || c.url)}</span>
       <button title="Edit" onclick="openEditModal(${c.id})">&#9998;</button>
+      <button title="Open original URL in new tab" onclick="openOriginal(${c.id})">&#8599;</button>
       <button title="Fullscreen" onclick="toggleFullscreen(${c.id})">&#x26F6;</button>
       <button title="Remove" onclick="removeCell(${c.id})">&times;</button>
     </div>
     <div class="cell-body">
       ${c.url
-        ? `<iframe src="${escapeHtml(c.type === 'timing' ? c.url : toEmbedUrl(c.url))}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`
+        ? `<iframe src="${escapeHtml(c.type === 'timing' ? normalizeUrl(c.url) : toEmbedUrl(c.url))}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`
         : `<div class="empty">No URL set – click ✎ to edit</div>`}
     </div>`;
 
@@ -840,6 +873,12 @@ function stopDrag() {
   }
   _drag = null;
   render();
+}
+
+/* ── Open original URL (fallback when an embed is blocked) ── */
+function openOriginal(id) {
+  const c = cells.find(c => c.id === id);
+  if (c && c.url) window.open(normalizeUrl(c.url), '_blank', 'noopener');
 }
 
 /* ── Fullscreen toggle ────────────────────────────── */
